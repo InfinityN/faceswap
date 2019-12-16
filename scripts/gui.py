@@ -9,7 +9,6 @@ from tkinter import messagebox, ttk
 from lib.gui import (TaskBar, CliOptions, CommandNotebook, ConsoleOut, Session, DisplayNotebook,
                      get_images, initialize_images, initialize_config, LastSession,
                      MainMenuBar, ProcessWrapper, StatusBar)
-from lib.utils import set_system_verbosity
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -99,7 +98,7 @@ class FaceswapGui(tk.Tk):
                                              self._init_args["debug"])
         self.set_initial_focus()
         self.set_layout()
-        self._config.project.initialize_default_options()
+        self._config.set_default_options()
         logger.debug("Built GUI")
 
     def add_containers(self):
@@ -208,7 +207,6 @@ class FaceswapGui(tk.Tk):
 class Gui():  # pylint: disable=too-few-public-methods
     """ The GUI process. """
     def __init__(self, arguments):
-        set_system_verbosity(arguments.loglevel)
         self.root = FaceswapGui(arguments.debug)
 
     def process(self):

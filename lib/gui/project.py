@@ -29,7 +29,6 @@ class _GuiSession():  # pylint:disable=too-few-public-methods
         self._serializer = get_serializer("json")
         self._config = config
 
-        self._default_opts = None
         self._options = None
         self._file_handler = file_handler
         self._filename = None
@@ -65,6 +64,11 @@ class _GuiSession():  # pylint:disable=too-few-public-methods
         return {key: val for key, val in self._options.items() if isinstance(val, dict)}
 
     @property
+    def _default_options(self):
+        """ dict: The default options for all tabs """
+        return self._config.default_options
+
+    @property
     def _dirname(self):
         """ str: The folder name that :attr:`_filename` resides in. Returns ``None`` if
         filename is ``None``. """
@@ -74,6 +78,13 @@ class _GuiSession():  # pylint:disable=too-few-public-methods
     def _basename(self):
         """ str: The base name of :attr:`_filename`. Returns ``None`` if filename is ``None``. """
         return os.path.basename(self._filename) if self._filename is not None else None
+
+    @property
+    def _stored_tab_name(self):
+        """str: The tab_name stored in :attr:`_options` or ``None`` if it does not exist """
+        if self._options is None:
+            return None
+        return self._options.get("tab_name", None)
 
     def _current_gui_state(self, command=None):
         """ The current state of the GUI.
@@ -431,6 +442,7 @@ class Tasks(_GuiSession):
                      filename is not None and sess_type == "task" and
                      os.path.splitext(filename)[1] == ".fsw")
         if is_legacy:
+            logger.debug("Legacy task found: '%s'", filename)
             filename = self._update_legacy_task(filename)
 
         filename_set = self._set_filename(filename, sess_type=sess_type)
@@ -440,7 +452,8 @@ class Tasks(_GuiSession):
         if not loaded:
             return
 
-        command = self._active_tab if current_tab else self._get_lone_task()
+        command = self._active_tab if current_tab else self._stored_tab_name
+        command = self._get_lone_task() if command is None else command
         if command is None:
             logger.error("Unable to determine task from the given file: '%s'", filename)
             return
@@ -449,12 +462,13 @@ class Tasks(_GuiSession):
             return
 
         self._set_options(command)
+        self._add_to_recent(command)
+
         if self._is_project:
             self._filename = self._project_filename
         elif self._filename.endswith(".fsw"):
             self._filename = None
 
-        self._add_to_recent(command)
         self._add_task(command)
         if is_legacy:
             self.save()
@@ -637,24 +651,14 @@ class Project(_GuiSession):
         """ :class:`Tasks`: The current session's :class:``Tasks``. """
         return self._config.tasks
 
-    def initialize_default_options(self):
-        """ Collect the default options. and store locally.
-
-        The Default GUI options are stored on Faceswap startup.
-
-        Exposed as the :attr:`_default_opts` for a project cannot be set until after the main
-        Command Tabs have been loaded.
-        """
-        self._default_opts = self._current_gui_state()
-        self._set_default_options()
-
-    def _set_default_options(self):
+    def set_default_options(self):
         """ Set the default options. The Default GUI options are stored on Faceswap startup.
 
-        Exposed as the :attr:`_default_opts` for a project cannot be set until after the main
+        Exposed as the :attr:`_default_options` for a project cannot be set until after the main
         Command Tabs have been loaded.
         """
-        self._options = self._default_opts
+        logger.debug("Setting options to default")
+        self._options = self._default_options
 
     # MODIFIED STATE CALLBACK
     def set_modified_callback(self):
@@ -728,7 +732,7 @@ class Project(_GuiSession):
         logger.debug("Updating legacy task '%s", self._filename)
         filename = self._filename
         self._filename = None
-        self._set_default_options()
+        self.set_default_options()
         self._tasks.clear_tasks()
         self._tasks.load(filename=filename, current_tab=False)
         logger.debug("Updated legacy task and reset project")
@@ -814,7 +818,7 @@ class Project(_GuiSession):
         self._filename = cfgfile.name
         cfgfile.close()
 
-        self._set_default_options()
+        self.set_default_options()
         self._config.cli_opts.reset()
         self._save()
         self._update_root_title()
@@ -833,7 +837,7 @@ class Project(_GuiSession):
             return
         self._config.cli_opts.reset()
         self._filename = None
-        self._set_default_options()
+        self.set_default_options()
         self._reset_modified_var()
         self._update_root_title()
         self._config.set_active_tab_by_name(self._config.user_config_dict["tab"])
@@ -919,7 +923,7 @@ class LastSession(_GuiSession):
         """
         opts = self._current_gui_state()
         logger.debug("Collected opts: %s", opts)
-        if not opts or opts == self._default_opts:
+        if not opts or opts == self._default_options:
             logger.debug("Default session, or no opts found. Not saving last session.")
             return None
         opts["tab_name"] = self._active_tab
@@ -937,6 +941,8 @@ class LastSession(_GuiSession):
             self.load()
         else:
             logger.debug("Not loading last session at user request")
+            logger.debug("Deleting LastSession file")
+            os.remove(self._filename)
 
     def load(self):
         """ Load the last session.
