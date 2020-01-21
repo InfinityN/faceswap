@@ -2,6 +2,7 @@
 """ Tool to generate masks and previews of masks for existing alignments file """
 import logging
 import os
+import sys
 
 import cv2
 import numpy as np
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 class Mask():
     """ This tool is part of the Faceswap Tools suite and should be called from
-    ``python tools.py mask``.
+    ``python tools.py mask`` command.
 
     Faceswap Masks tool. Generate masks from existing alignments files, and output masks
     for preview.
@@ -66,11 +67,11 @@ class Mask():
         """
         if not os.path.exists(mask_input):
             logger.error("Location cannot be found: '%s'", mask_input)
-            exit(0)
+            sys.exit(0)
         if os.path.isfile(mask_input) and self._input_is_faces:
             logger.error("Input type 'faces' was selected but input is not a folder: '%s'",
                          mask_input)
-            exit(0)
+            sys.exit(0)
         logger.debug("input '%s' is valid", mask_input)
 
     def _set_saver(self, arguments):
@@ -90,7 +91,7 @@ class Mask():
         if not hasattr(arguments, "output") or arguments.output is None or not arguments.output:
             if self._update_type == "output":
                 logger.error("Processing set as 'output' but no output folder provided.")
-                exit(0)
+                sys.exit(0)
             logger.debug("No output provided. Not creating saver")
             return None
         output_dir = str(get_folder(arguments.output, make_folder=True))
@@ -201,19 +202,24 @@ class Mask():
             if not self._alignments.frame_has_faces(frame):
                 logger.debug("Skipping frame with no faces: '%s'", frame)
                 continue
-            detected_faces = []
-            for idx, alignment in enumerate(self._alignments.get_faces_in_frame(frame)):
-                self._face_count += 1
-                if self._check_for_missing(frame, idx, alignment):
-                    continue
-                detected_face = self._get_detected_face(alignment)
-                if self._update_type == "output":
+
+            faces_in_frame = self._alignments.get_faces_in_frame(frame)
+            self._face_count += len(faces_in_frame)
+
+            # To keep face indexes correct/cover off where only one face in an image is missing a
+            # mask where there are multiple faces we process all faces again for any frames which
+            # have missing masks.
+            if all(self._check_for_missing(frame, idx, alignment)
+                   for idx, alignment in enumerate(faces_in_frame)):
+                continue
+
+            detected_faces = [self._get_detected_face(alignment) for alignment in faces_in_frame]
+            if self._update_type == "output":
+                for idx, detected_face in enumerate(detected_faces):
                     detected_face.image = image
                     self._save(frame, idx, detected_face)
-                else:
-                    detected_faces.append(detected_face)
-                    self._update_count += 1
-            if self._update_type != "output":
+            else:
+                self._update_count += len(detected_faces)
                 queue.put(ExtractMedia(filename, image, detected_faces=detected_faces))
         if self._update_type != "output":
             queue.put("EOF")
@@ -240,7 +246,7 @@ class Mask():
                   alignment.get("mask", None) is not None and
                   alignment["mask"].get(self._mask_type, None) is not None)
         if retval:
-            logger.debug("Not updating existing mask for face: '%s' - %s", frame, idx)
+            logger.debug("Mask pre-exists for face: '%s' - %s", frame, idx)
         return retval
 
     def _get_output_suffix(self):
@@ -375,7 +381,7 @@ class Mask():
               - The masked face
         """
         mask = detected_face.mask[self._mask_type]
-        mask.set_blur_kernel_and_threshold(**self._output_opts)
+        mask.set_blur_and_threshold(**self._output_opts)
         if not self._output_full_frame or self._input_is_faces:
             if self._input_is_faces:
                 face = detected_face.image
